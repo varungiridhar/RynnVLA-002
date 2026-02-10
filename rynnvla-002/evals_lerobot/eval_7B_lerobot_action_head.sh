@@ -22,7 +22,8 @@ python ../eval_solver_lerobot_action_head_state.py \
     --action_dim 6 \
     --time_horizon 20 \
     --no_auto_resume \
-    --resume_path "your checkpoint path" \
+    --resume_path "/home/guest2/.cache/huggingface/hub/models--Alibaba-DAMO-Academy--WorldVLA/snapshots/5952d61278d52608b2f141ef5b155d42e237165b/model_256/libero_goal/" \
+    --tokenizer_path "/home/guest2/RynnVLA-002/ckpts/models--Alpha-VLLM--Lumina-mGPT-7B-768/snapshots/9624463a82ea5ce814af9b561dcd08a31082c3af/" \
     --eval_only True \
     --model_size 7B \
     --batch_size 4 \

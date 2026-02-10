@@ -23,3 +23,7 @@ rynnvla-002/LIBERO-master/
 rynnvla-002/eval_outputs/
 rynnvla-002/ckpts/
 rynnvla-002/assets/.nfs*
+
+*ckpts*
+*blobs*
+*tmp_infer_libero*

@@ -19,7 +19,7 @@ task_suite=libero_goal
 exp_name=his_2_third_view_wrist_w_state_5_256_abiw
 his_setting=his_2_third_view_wrist_w_state
 eval_setting=continous
-checkpoint_path=../outputs/"$task_suite"/"$exp_name"/"epoch$epoch_num"
+checkpoint_path=/home/guest2/.cache/huggingface/hub/models--Alibaba-DAMO-Academy--RynnVLA-002/snapshots/be44787bfdf010799129dbd3752637f5c52ca957/VLA_model_256/libero_goal/
 
 base_output_dir=../eval_outputs/"$task_suite"/"$exp_name"/"epoch_$epoch_num"/"$eval_setting"
 mkdir -p "$base_output_dir"
@@ -30,7 +30,7 @@ torchrun --nnodes=1 --nproc_per_node=1 --master_port=$((29502)) ../eval_solver_l
     --his $his_setting \
     --no_auto_resume \
     --resume_path $checkpoint_path \
-    --tokenizer_path ../ckpts/models--Alpha-VLLM--Lumina-mGPT-7B-768/snapshots/9624463a82ea5ce814af9b561dcd08a31082c3af \
+    --tokenizer_path /home/guest2/RynnVLA-002/ckpts/models--Alpha-VLLM--Lumina-mGPT-7B-768/snapshots/9624463a82ea5ce814af9b561dcd08a31082c3af \
     --eval_only True \
     --model_size 7B \
     --batch_size 4 \

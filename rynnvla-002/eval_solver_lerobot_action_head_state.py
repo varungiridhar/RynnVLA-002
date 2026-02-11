@@ -37,10 +37,7 @@ class Solver(PretrainSolverBase):
 
         (Path(args.output_dir) / "tensorboard").mkdir(parents=True, exist_ok=True)
         self.log_writer = SummaryWriter(log_dir=str(Path(args.output_dir) / "tensorboard"))
-        if getattr(self.args, "tokenizer_path", None):
-            self.item_processor = ItemProcessor(target_size=256, tokenizer=self.args.tokenizer_path)
-        else:
-            self.item_processor = ItemProcessor(target_size=256)
+        self.item_processor = ItemProcessor(target_size=256)
         print('init done 000000!')
         self.his_img = []
         self.model, _ = self._model_func(self.args.resume_path)
@@ -75,12 +72,6 @@ class Solver(PretrainSolverBase):
         parser.add_argument("--compress", default='gzip', type=str)
         parser.add_argument("--action_dim", type=int, default=7)
         parser.add_argument("--time_horizon", type=int, default=5)
-        parser.add_argument(
-            "--tokenizer_path",
-            type=str,
-            default=None,
-            help="HF tokenizer directory or tokenizer.model path",
-        )
         return parser
 
     def _model_func(
@@ -107,8 +98,6 @@ class Solver(PretrainSolverBase):
         return model, None
 
     def _item_processor_func(self) -> ItemProcessor:
-        if getattr(self.args, "tokenizer_path", None):
-            return ItemProcessor(target_size=288, tokenizer=self.args.tokenizer_path)
         return ItemProcessor(target_size=288)
 
     def _make_and_save_starting_point(self, save_path: str) -> None:
@@ -182,8 +171,3 @@ class Solver(PretrainSolverBase):
         self.his_img = [front_image]
 
         return dis_action_unnorm
-
-
-if __name__ == "__main__":
-    args = Solver.get_args_parser().parse_args()
-    solver = Solver(args)

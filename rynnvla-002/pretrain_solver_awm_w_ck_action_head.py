@@ -93,14 +93,23 @@ class Solver(PretrainSolverBase_ck_action_head):
                 )
                 model = ChameleonXLLMXForConditionalGeneration_ck_action_head(config)
 
-        if self.args.use_lora:
-            lora_config = peft.LoraConfig(
-                r=16,                     # rank
-                lora_alpha=32,            # scaling
-                target_modules=[
+        peft_method = (self.args.peft_method_type or "").upper()
+        use_peft = bool(peft_method)
+        if use_peft:
+            if peft_method not in ["", "LORA"]:
+                raise ValueError(f"Unsupported PEFT method '{self.args.peft_method_type}'. Only LORA is supported.")
+            target_modules = self.args.peft_target_modules
+            if target_modules is None:
+                target_modules = [
                     "q_proj", "k_proj", "v_proj", "o_proj",
                     "gate_proj", "up_proj", "down_proj"
-                ],
+                ]
+            modules_to_save = self.args.peft_full_training_modules
+            lora_config = peft.LoraConfig(
+                r=self.args.peft_r,
+                lora_alpha=self.args.peft_r * 2,
+                target_modules=target_modules,
+                modules_to_save=modules_to_save,
                 lora_dropout=0.1,
                 bias="none",
                 task_type="CAUSAL_LM"

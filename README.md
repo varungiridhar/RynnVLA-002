@@ -242,6 +242,26 @@ cd rynnvla-002/exps_nopretokenize
 bash libero_goal_his_2_third_view_wrist_w_state_5_256_abiw.sh
 ```
 
+## 🔧 PEFT Training Script (Before Evaluation)
+Use the single-GPU training script:
+```bash
+cd rynnvla-002/exps_pretokenize
+bash libero_goal_his_2_third_view_wrist_w_state_5_256_abiw_single_gpu.sh
+```
+
+PEFT CLI args used by the solver:
+```bash
+--peft.method_type LORA
+--peft.r 16
+--peft.target_modules q_proj k_proj v_proj o_proj gate_proj up_proj down_proj
+--peft.full_training_modules state_proj
+```
+
+Notes:
+- `--peft.method_type`: set to `LORA` to enable PEFT.
+- `--peft.target_modules`: space-separated list (`nargs="+"`).
+- `--peft.full_training_modules`: optional space-separated list (`nargs="+"`), mapped to PEFT `modules_to_save`.
+
 
 ## ✅ VLA Model Evaluation on LIBERO
 ### Step 1: Prepare evaluation scripts

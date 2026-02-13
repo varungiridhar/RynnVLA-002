@@ -29,6 +29,7 @@ lr=5e-6
 wd=0.15
 dropout=0.08
 z_loss_weight=1e-5
+peft_r=16
 
 data_config_train=../configs/libero_goal/his_2_third_view_wrist_w_state_5_256_pretokenize.yaml
 data_config_val_ind=../configs/libero_goal/his_2_third_view_wrist_w_state_5_256_pretokenize.yaml
@@ -69,7 +70,8 @@ torchrun --master_addr=$MASTER_ADDR --master_port=$MASTER_PORT --nproc_per_node=
 --dropout ${dropout} \
 --z_loss_weight ${z_loss_weight} \
 --ckpt_max_keep 0 \
---use_lora \
+--peft.method_type LORA \
+--peft.r ${peft_r} \
 2>&1 | tee -a "$output_dir"/"$exp_name"/output.log
 
 echo "exp name: $exp_name" 

@@ -273,7 +273,15 @@ class PretrainSolverBase_ck_action_head(ABC):
         parser.add_argument("--ablation", type=str, choices=["0", "1", "2", "3", "4", "5"], default="fp32")
         parser.add_argument("--loss_ct_weights", type=int, default=10)
         parser.add_argument("--loss_img_weights", type=float, default=0.04)
-        parser.add_argument("--use_lora", action="store_true", help="Whether or not to use LoRA. ")
+        parser.add_argument("--peft.method_type", dest="peft_method_type", type=str, default=None)
+        parser.add_argument("--peft.r", dest="peft_r", type=int, default=16)
+        parser.add_argument("--peft.target_modules", dest="peft_target_modules", nargs="+", default=None)
+        parser.add_argument(
+            "--peft.full_training_modules",
+            dest="peft_full_training_modules",
+            nargs="+",
+            default=None,
+        )
 
 
         return parser
@@ -308,6 +316,8 @@ class PretrainSolverBase_ck_action_head(ABC):
 
         # only rank 0 instantiate, otherwise to meta
         unwrapped_model, tokenizer = self._model_func(init_from)
+        use_peft = bool(getattr(self.args, "peft_method_type", None))
+
         if hasattr(unwrapped_model, "get_trainable_params"):
             trainable_params = dict(unwrapped_model.get_trainable_params())
             for key, param in unwrapped_model.named_parameters():
@@ -328,7 +338,7 @@ class PretrainSolverBase_ck_action_head(ABC):
                 f"set all params to trainable"
             )
             for key, param in unwrapped_model.named_parameters():
-                if "lora_" in key.lower() or not self.args.use_lora:
+                if "lora_" in key.lower() or not use_peft:
                     param.requires_grad = True
                 param.data = param.data.to(torch.bfloat16)
         self.logger.info("Finish instantiating unwrapped model.")

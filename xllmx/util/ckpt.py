@@ -3,7 +3,6 @@ import logging
 import os
 import shutil
 from typing import Dict, Optional
-import subprocess
 
 import torch
 from torch import distributed as dist
@@ -63,8 +62,6 @@ def save(
     save_dir = os.path.join(output_dir, save_name)
 
     os.makedirs(save_dir, exist_ok=True)
-
-    # save model
     with FSDP.state_dict_type(
         model,
         StateDictType.FULL_STATE_DICT,
@@ -72,13 +69,14 @@ def save(
     ):
         # run saving in separate functions to save memory
         def _save_model():
+    #           # todo make saving precision optional
             save_dtype = {
                 "fp16": torch.float16,
                 "bf16": torch.bfloat16,
                 "tf32": torch.float,
             }[
                 args.precision
-            ]  # todo make saving precision optional
+            ]
             model_safe = model.module
             if getattr(args, "only_save_trainable", False):
                 model_trainable_params = model_safe.get_trainable_params()
@@ -86,9 +84,6 @@ def save(
                     ".".join([_ for _ in key.split(".") if not _.startswith("_")])
                     for key in model_trainable_params.keys()
                 ]
-
-                
-            
                 consolidated_model_state_dict = {
                     key: val.to(save_dtype) for key, val in model_safe.state_dict().items() if key in model_trainable_params
                 }
@@ -96,6 +91,8 @@ def save(
                 consolidated_model_state_dict = {key: val.to(save_dtype) for key, val in model_safe.state_dict().items()}
 
             if is_main_process:
+                    
+
                 model_safe.save_pretrained(save_dir, state_dict=consolidated_model_state_dict)
 
         _save_model()

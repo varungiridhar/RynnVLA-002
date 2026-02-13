@@ -330,7 +330,7 @@ class PretrainSolverBase_ck_action_head(ABC):
             for key, param in unwrapped_model.named_parameters():
                 if "lora_" in key.lower() or not self.args.use_lora:
                     param.requires_grad = True
-                param.data = param.data.to(self.mixed_precision_dtype)
+                param.data = param.data.to(torch.bfloat16)
         self.logger.info("Finish instantiating unwrapped model.")
         self.logger.info(f"Unwrapped model: \n{str(unwrapped_model)}")
         # self.logger.info(f"Model config: \n{unwrapped_model.config.to_dict()}")

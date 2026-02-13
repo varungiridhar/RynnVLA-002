@@ -1,7 +1,6 @@
 import json
 import logging
 import random
-from pathlib import Path
 from typing import Dict, List
 import numpy as np
 
@@ -16,22 +15,6 @@ from xllmx.data.item_processor import MMConvItemProcessor
 from transformers import AutoProcessor
 
 logger = logging.getLogger(__name__)
-
-
-def _resolve_chameleon_tokenizer_dir() -> Path:
-    """Resolve ckpts/chameleon/tokenizer independent of current working directory."""
-    repo_root = Path(__file__).resolve().parents[1]
-    candidates = [
-        repo_root / "ckpts" / "chameleon" / "tokenizer",
-        repo_root.parent / "ckpts" / "chameleon" / "tokenizer",
-    ]
-    for candidate in candidates:
-        if (candidate / "text_tokenizer.json").is_file():
-            return candidate
-    raise FileNotFoundError(
-        "Could not find text_tokenizer.json under "
-        f"{candidates[0]} or {candidates[1]}"
-    )
 
 MIN_VALUES_ACTION = np.array([
     -27.33398438,  # 维度 0 的最小值
@@ -485,14 +468,13 @@ class FlexARItemProcessor_Action_State(MMConvItemProcessor):
         #  todo
         #  currently still use the original image tokenizer provided by Meta rather than transformers
         #  because the transformers implementation does not contain the vae decoder
-        tokenizer_dir = _resolve_chameleon_tokenizer_dir()
         self.chameleon_ori_vocab = chameleon_vae_ori.VocabInfo(
-            json.load(open(tokenizer_dir / "text_tokenizer.json", encoding="utf8"))["model"]["vocab"]
+            json.load(open("../ckpts/chameleon/tokenizer/text_tokenizer.json", encoding="utf8"))["model"]["vocab"]
         )
         self.chameleon_ori_translation = chameleon_vae_ori.VocabTranslation(self.chameleon_ori_vocab, device=device)
         self.chameleon_ori_image_tokenizer = chameleon_vae_ori.ImageTokenizer(
-            cfg_path=str(tokenizer_dir / "vqgan.yaml"),
-            ckpt_path=str(tokenizer_dir / "vqgan.ckpt"),
+            cfg_path="../ckpts/chameleon/tokenizer/vqgan.yaml",
+            ckpt_path="../ckpts/chameleon/tokenizer/vqgan.ckpt",
             device=device,
         )
         
@@ -524,21 +506,13 @@ class FlexARItemProcessor_Action_State(MMConvItemProcessor):
 
         if isinstance(image, Image.Image):
             pass
-        elif isinstance(image, torch.Tensor):
-            image = image.detach().cpu().numpy()
-            image = Image.fromarray(np.asarray(image).astype(np.uint8))
-        elif isinstance(image, np.ndarray):
-            image = Image.fromarray(np.asarray(image).astype(np.uint8))
         elif isinstance(image, list):
-            image = Image.fromarray(np.asarray(image).astype(np.uint8))
+            image = Image.fromarray(np.array(image).astype(np.uint8))
         else:
             image = Image.open(read_general(image))
             new_size = (256, 256)
             # new_size = (512, 512)
             image = image.resize(new_size)
-
-        if image.mode != "RGB":
-            image = image.convert("RGB")
         
         image = var_center_crop(image, crop_size_list=self.crop_size_list)
 
@@ -856,3 +830,4 @@ class FlexARItemProcessor_Action_FAST(MMConvItemProcessor):
         tokens = tokens.view(h_latent_dim, w_latent_dim + 1)[:, :-1].flatten()
 
         return self.chameleon_ori_image_tokenizer.pil_from_img_toks(tokens, h_latent_dim, w_latent_dim)
+

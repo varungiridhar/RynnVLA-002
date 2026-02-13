@@ -8,6 +8,7 @@ from model import ChameleonXLLMXConfig, ChameleonXLLMXForConditionalGeneration_c
 from xllmx.data.item_processor import ItemProcessorBase
 from xllmx.solvers.pretrain import PretrainSolverBase_ck_action_head
 
+import peft
 
 class ItemProcessor(ItemProcessorBase):
     def process_item(self, data_item: dict, training_mode=False) -> Tuple[List, List]:
@@ -61,6 +62,7 @@ class Solver(PretrainSolverBase_ck_action_head):
         self,
         init_from: str,
     ) -> (ChameleonXLLMXForConditionalGeneration_ck_action_head, None):
+        
 
         # Only instantiate the model on rank0
         # Other ranks will receive the model weights from rank0 during FSDP wrapping (through `sync_module_states`)
@@ -91,8 +93,23 @@ class Solver(PretrainSolverBase_ck_action_head):
                 )
                 model = ChameleonXLLMXForConditionalGeneration_ck_action_head(config)
 
-        del model.model.vqmodel
-
+        if self.args.use_lora:
+            lora_config = peft.LoraConfig(
+                r=16,                     # rank
+                lora_alpha=32,            # scaling
+                target_modules=[
+                    "q_proj", "k_proj", "v_proj", "o_proj",
+                    "gate_proj", "up_proj", "down_proj"
+                ],
+                lora_dropout=0.1,
+                bias="none",
+                task_type="CAUSAL_LM"
+            )
+            model = peft.get_peft_model(model, lora_config)
+            model.print_trainable_parameters()
+            del model.base_model.model.model.vqmodel
+        else:
+            del model.model.vqmodel
         return model, None
 
     def _item_processor_func(self) -> ItemProcessorBase:

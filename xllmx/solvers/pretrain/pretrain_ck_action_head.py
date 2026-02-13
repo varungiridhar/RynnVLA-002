@@ -273,6 +273,7 @@ class PretrainSolverBase_ck_action_head(ABC):
         parser.add_argument("--ablation", type=str, choices=["0", "1", "2", "3", "4", "5"], default="fp32")
         parser.add_argument("--loss_ct_weights", type=int, default=10)
         parser.add_argument("--loss_img_weights", type=float, default=0.04)
+        parser.add_argument("--use_lora", action="store_true", help="Whether or not to use LoRA. ")
 
 
         return parser
@@ -327,10 +328,9 @@ class PretrainSolverBase_ck_action_head(ABC):
                 f"set all params to trainable"
             )
             for key, param in unwrapped_model.named_parameters():
-                param.requires_grad = True
-                param.requires_grad = True
-                promote_param_to_fp32(param)
-
+                if "lora_" in key.lower() or not self.args.use_lora:
+                    param.requires_grad = True
+                param.data = param.data.to(self.mixed_precision_dtype)
         self.logger.info("Finish instantiating unwrapped model.")
         self.logger.info(f"Unwrapped model: \n{str(unwrapped_model)}")
         # self.logger.info(f"Model config: \n{unwrapped_model.config.to_dict()}")

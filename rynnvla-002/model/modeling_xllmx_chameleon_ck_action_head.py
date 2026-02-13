@@ -309,6 +309,7 @@ class ChameleonXLLMXForConditionalGeneration_ck_action_head(ChameleonForConditio
         # self.action_head = ActionHead(action_dim=self.action_dim, time_horizon=20, hidden_size_factor=0.25, num_encoder_layers=2)
         self.action_dim = config.action_dim
         self.action_head = ActionHead(action_dim=config.action_dim, time_horizon=config.time_horizon, hidden_size_factor=0.25, num_encoder_layers=2)
+        
         self.post_init()
         
 
@@ -349,8 +350,11 @@ class ChameleonXLLMXForConditionalGeneration_ck_action_head(ChameleonForConditio
             attention_mask = None
         else:
             attention_mask = self.generate_att_mask_3(input_ids)
+        # PEFT generates an attention mask in forwarding in kwargs
+        kwargs.pop("attention_mask", None)
+        
         # import pdb; pdb.set_trace()
-                
+        
         # explicit use_cache=False for the following
         # https://github.com/Lightning-AI/pytorch-lightning/issues/19267
         result = ChameleonForConditionalGeneration.forward(

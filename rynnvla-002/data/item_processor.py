@@ -14,6 +14,8 @@ from xllmx.data.item_processor import MMConvItemProcessor
 
 from transformers import AutoProcessor
 
+import traceback
+
 logger = logging.getLogger(__name__)
 
 
@@ -151,6 +153,7 @@ class FlexARItemProcessor(MMConvItemProcessor):
             modified_labels_item = []
             for i, (token_or_media, ori_label) in enumerate(zip(tokens, labels)):
                 if isinstance(token_or_media, int):
+                    
                     token = token_or_media
                     input_tokens_item.append(token)
                     modified_labels_item.append(ori_label)
@@ -182,11 +185,11 @@ class FlexARItemProcessor(MMConvItemProcessor):
         tokens = tokens[2:]
         h, w = h_grids * self.patch_size, w_grids * self.patch_size
         h_latent_dim, w_latent_dim = h_grids * 2, w_grids * 2
-
+        
         for i in range(len(tokens)):
             if (i + 1) % (w_latent_dim + 1) != 0:
-                tokens[i] = self.chameleon_ori_translation.bpe2img[tokens[i]]
-
+                tokens[i] = self.chameleon_ori_translation.bpe2img[int(tokens[i])]
+     
         assert len(tokens) == h_latent_dim * (w_latent_dim + 1)
         tokens = torch.tensor(tokens, dtype=torch.int64).cuda()
 
@@ -257,7 +260,7 @@ class FlexARItemProcessor_Action(MMConvItemProcessor):
         return self.tokenizer.tokenizer.vocab[token]
 
     @torch.no_grad()
-    def process_image(self, image) -> Dict:
+    def process_image(self, image, raw_toks=False) -> Dict:
         if isinstance(image, Image.Image):
             pass
         elif isinstance(image, list):
@@ -276,6 +279,9 @@ class FlexARItemProcessor_Action(MMConvItemProcessor):
         image_toks = self.chameleon_ori_translation.convert_img2bp2(
             self.chameleon_ori_image_tokenizer.img_tokens_from_pil(image)
         ).view(-1)
+
+        if raw_toks:
+            return image_toks
 
         full_image_toks = image_toks.reshape(image.size[1] // 16, image.size[0] // 16)
         new_line_id = self.token2id(self.new_line_token)
@@ -352,7 +358,6 @@ class FlexARItemProcessor_Action(MMConvItemProcessor):
                         modified_labels_item += [-100] * len(token_or_media["input_ids"])
                     else:
                         modified_labels_item += token_or_media["labels"]
-
             return input_tokens_item, modified_labels_item
         else:
             tokens = super().process_item(item, training_mode=training_mode)

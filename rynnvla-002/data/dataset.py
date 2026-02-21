@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 class LiberoFinetuneConversation(Dataset):
-    def __init__(self, config_path, resolution, with_state=True, with_wrist=True, with_action=True, with_world_model=True):
+    def __init__(self, config_path, resolution, with_state=True, with_wrist=True, with_action=True, with_world_model=True, with_joint_awm=False):
         logger.info(f"read dataset config from {config_path}")
         with open(config_path, "r") as f:
             self.config = yaml.load(f, Loader=yaml.FullLoader)
@@ -43,6 +43,7 @@ class LiberoFinetuneConversation(Dataset):
         self.with_wrist = with_wrist
         self.with_action = with_action
         self.with_world_model = with_world_model
+        self.with_joint_awm = with_joint_awm
         self.get_annotation_data(split=self.config["META"]["split"])
 
 
@@ -105,7 +106,7 @@ class LiberoFinetuneConversation(Dataset):
         img_history_start_idx = max(0, action_idx - his + 1)
         data['image_idx'] = list(range(action_sum)[img_history_start_idx:action_idx+1])
         data['action_ids'] = list(range(action_idx, action_idx + len_action))
-
+        data['future_image_idx'] = action_idx + len_action
         data['task_name'] = task_name
         data['trj'] = trj
         data['task_type'] = 'action'
@@ -115,12 +116,14 @@ class LiberoFinetuneConversation(Dataset):
 
     def get_world_model_data(self, action_idx, action_sum, orig_actions, trj, task_name, task_id):
         his = self.config["world_model"]["his"]
+        len_action = self.config["action_model"]["len_action"]
         if action_idx>action_sum-his-1:
             return None
         data = {}
 
         historical_images_idx = list(range(max(action_idx - his + 1, 0), action_idx + 1))
         future_images_idx = list(range(action_idx + 1, action_idx + 2))
+        data['future_image_idx'] = action_idx + len_action
         data['image_idx'] = historical_images_idx+future_images_idx
         data['action_ids'] = historical_images_idx
         data['task_name'] = task_name
@@ -154,6 +157,9 @@ class LiberoFinetuneConversation(Dataset):
             images.append(Image.fromarray(orig_rgb[image_idx][::-1, ::-1].astype(np.uint8)))
             if self.with_wrist:
                 images.append(Image.fromarray(orig_rgb_wrist[image_idx][::-1, ::-1].astype(np.uint8)))
+
+        future_awm_image_idx = self.data_list[idx]["future_image_idx"]
+        future_awm_image = Image.fromarray(orig_rgb[future_awm_image_idx][::-1][::-1].astype(np.uint8))
 
         combined_state = []
         if self.data_list[idx]['task_type']=='action':
@@ -213,6 +219,8 @@ class LiberoFinetuneConversation(Dataset):
         # print(conversations)
         # print('***********')
         # tokens, labels = self.item_processor.process_item(conv, training_mode=True)
+        if self.with_joint_awm:
+            return conversations, images, action, combined_state, future_awm_image
         return conversations, images, action, combined_state
 
 if __name__=='__main__':

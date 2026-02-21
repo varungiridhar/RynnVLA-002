@@ -222,6 +222,7 @@ class MMConvItemProcessor(ItemProcessorBase):
             )
 
         check_pos = 0
+        
         for i, p in enumerate(pieces):
             if i == 0:
                 tokenized_value = self.tokenizer.encode(p["data"], bos=True, eos=False)
@@ -236,7 +237,6 @@ class MMConvItemProcessor(ItemProcessorBase):
                 labels[check_pos : check_pos + len(tokenized_value)] = tokenized_value
 
             check_pos = check_pos + len(tokenized_value)
-
         if training_mode and all([_ <= 0 for _ in labels]):  # nothing to predict
             raise LabelAllZeroError()
 

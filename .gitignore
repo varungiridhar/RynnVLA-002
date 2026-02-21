@@ -27,3 +27,5 @@ rynnvla-002/assets/.nfs*
 *ckpts*
 *blobs*
 *tmp_infer_libero*
+
+.vscode

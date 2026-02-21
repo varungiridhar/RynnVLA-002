@@ -1512,6 +1512,33 @@ class ChameleonForConditionalGeneration(ChameleonPreTrainedModel):
 
     def get_decoder(self):
         return self.model
+
+    @staticmethod
+    def _find_image_label_spans(
+        labels: torch.LongTensor,
+        image_start_token_id: int,
+        image_end_token_id: int,
+        ignore_index: int = -100,
+    ):
+        """
+        Find [start, end] index pairs (inclusive) for image segments in labels.
+        Unclosed segments are ignored.
+        """
+        spans_per_batch = []
+        labels_cpu = labels.detach().to("cpu")
+        for label_row in labels_cpu:
+            row_spans = []
+            start_idx = None
+            for idx, token in enumerate(label_row.tolist()):
+                if token == ignore_index:
+                    continue
+                if token == image_start_token_id:
+                    start_idx = idx
+                elif token == image_end_token_id and start_idx is not None:
+                    row_spans.append((start_idx, idx))
+                    start_idx = None
+            spans_per_batch.append(row_spans)
+        return spans_per_batch
     
     @add_start_docstrings_to_model_forward(CHAMELEON_INPUTS_DOCSTRING)
     @replace_return_docstrings(output_type=CausalLMOutputWithPast, config_class=_CONFIG_FOR_DOC)
@@ -1591,6 +1618,7 @@ class ChameleonForConditionalGeneration(ChameleonPreTrainedModel):
             logits[:, :, image_tokens] = torch.finfo(logits.dtype).min
 
         loss = None
+        
         if labels is not None:
             # Shift so that tokens < n predict n
             shift_logits = logits[..., :-1, :].contiguous()

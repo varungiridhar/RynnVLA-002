@@ -1,6 +1,7 @@
 import functools
 import logging
 import math
+import os
 from typing import List
 
 import torch
@@ -8,6 +9,8 @@ from torch import nn
 
 from .chameleon import ChameleonForConditionalGeneration
 from .configuration_xllmx_chameleon import ChameleonXLLMXConfig
+
+from data.item_processor import FlexARItemProcessor
 
 logger = logging.getLogger(__name__)
 
@@ -90,209 +93,226 @@ class L1RegressionActionHead(nn.Module):
         action = self.model(rearranged_actions_hidden_states)
         return action
 
+import torch
+import torch.nn as nn
+
 class ActionHead(nn.Module):
-    def __init__(self, action_dim=7, time_horizon=8, hidden_size_factor=0.25, num_encoder_layers=2):
+    def __init__(
+        self,
+        action_dim=7,
+        time_horizon=8,
+        hidden_size_factor=0.25,
+        num_encoder_layers=2,
+        num_image_tokens=256,
+        image_codebook_size=8192,
+    ):
         super().__init__()
         self.action_dim = action_dim
         self.time_horizon = time_horizon
         self.num_encoder_layers = num_encoder_layers
+
         self.hidden_size = 4096
         self.reduced_hidden_size = int(self.hidden_size * hidden_size_factor)
-        self.action_token_embeddings = nn.Embedding(1, time_horizon * action_dim * self.hidden_size)
+
+        self.num_image_tokens = num_image_tokens
+        self.image_codebook_size = image_codebook_size
+
+        # Existing: action token "queries" (learned)
+        self.action_token_embeddings = nn.Embedding(
+            1, time_horizon * action_dim * self.hidden_size
+        )
         nn.init.normal_(self.action_token_embeddings.weight, std=0.02)
+
+        # NEW: 256 learned positional/query embeddings for image tokens (in reduced space)
+        # Think of these as learned "positions" that ask the transformer to produce 256 outputs.
+        self.image_pos_queries = nn.Embedding(self.num_image_tokens, self.reduced_hidden_size)
+        nn.init.normal_(self.image_pos_queries.weight, std=0.02)
+
+        # Project model hidden states to reduced dim
         self.hidden_projection = nn.Linear(self.hidden_size, self.reduced_hidden_size)
+
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=self.reduced_hidden_size,
             nhead=4,
             dim_feedforward=self.reduced_hidden_size * 4,
             batch_first=True,
-            dropout=0.1
+            dropout=0.1,
         )
         self.transformer_encoder = nn.TransformerEncoder(
             encoder_layer=encoder_layer,
             num_layers=self.num_encoder_layers,
-            norm=nn.LayerNorm(self.reduced_hidden_size)
+            norm=nn.LayerNorm(self.reduced_hidden_size),
         )
+
+        # Your existing action head (expects [B, time_horizon*action_dim, reduced_hidden])
         self.output_projection = L1RegressionActionHead(
-            self.reduced_hidden_size, self.reduced_hidden_size, self.time_horizon, self.action_dim
+            self.reduced_hidden_size,
+            self.reduced_hidden_size,
+            self.time_horizon,
+            self.action_dim,
         )
-        
-    def forward(self, hidden_states, input_ids, attention_mask=None, target_token_id=10004, eval=False):
+
+        # NEW: image token classifier head -> logits over VQ codebook (8192)
+        self.image_head = nn.Linear(self.reduced_hidden_size, self.image_codebook_size)
+
+    def forward(
+        self,
+        hidden_states,
+        input_ids,
+        attention_mask=None,
+        target_token_id=10004,
+        eval=False,
+        return_image_logits=False,
+        target_image_tokens=None,
+    ):
         """
-        Args:
-            hidden_states: [batch_size, seq_len, hidden_size] - 从模型得到的hidden states
-            input_ids: [batch_size, seq_len] - 对应的input_ids
-            attention_mask: [batch_size, seq_len] - 注意力掩码（可选）
-            target_token_id: int - 目标token id (默认10004)
-        
         Returns:
-            actions: 预测的动作序列
+            actions:              [N, action_dim]  where N = (#kept_rows * time_horizon)
+            image_logits:         [B2, 256, 8192]  where B2 = (#kept_rows)
+            image_token_ids:      [B2, 256]        (optional, argmax over logits)
+            flag:                 bool
         """
-        # # 检查输入是否有NaN
-        # print("=== NaN Debug Info ===")
-        # print(f"Input hidden_states has NaN: {torch.isnan(hidden_states).any()}")
-        # if torch.isnan(hidden_states).any():
-        #     print(f"NaN positions in hidden_states: {torch.isnan(hidden_states).nonzero()}")
-        
         batch_size = hidden_states.shape[0]
-        action_tokens = self.action_token_embeddings.weight.view(1, self.time_horizon * self.action_dim, self.hidden_size).expand(batch_size, -1, -1)
-        
-        # print(f"Action tokens has NaN: {torch.isnan(action_tokens).any()}")
-        # if torch.isnan(action_tokens).any():
-        #     print(f"NaN positions in action_tokens: {torch.isnan(action_tokens).nonzero()}")
-        
-        # 第一步：提取每一行第一个target_token_id之前的token的hidden states
+
+        # Build action tokens in hidden_size, then will get projected like everything else
+        action_tokens = self.action_token_embeddings.weight.view(
+            1, self.time_horizon * self.action_dim, self.hidden_size
+        ).expand(batch_size, -1, -1)
+
         extracted_hidden_states = []
         extracted_attention_masks = []
-
+        kept_row_indices = []
         flag = True
-        
+
         for i in range(batch_size):
-            # 找到第一个target_token_id的位置
             target_positions = (input_ids[i] == target_token_id).nonzero(as_tuple=True)[0]
             if len(target_positions) > 1 or eval:
-                # 取第一个target_token_id之前的所有token
                 end_pos = target_positions[0].item()
             else:
                 continue
-            
-            # print(f"Batch {i}: end_pos = {end_pos}")
-            
-            # 提取对应的hidden states
-            extracted_hidden = hidden_states[i, :end_pos, :]  # [end_pos, hidden_size]
-            # print(f"Batch {i}: extracted_hidden has NaN: {torch.isnan(extracted_hidden).any()}")
-            extracted_hidden_states.append(extracted_hidden)
-            
-            # 提取对应的attention mask（如果提供）
+
+            extracted_hidden_states.append(hidden_states[i, :end_pos, :])
+            kept_row_indices.append(i)
+
             if attention_mask is not None:
-                extracted_mask = attention_mask[i, :end_pos]
-                extracted_attention_masks.append(extracted_mask)
-        
+                extracted_attention_masks.append(attention_mask[i, :end_pos])
+
         if len(extracted_hidden_states) == 0:
             extracted_hidden_states.append(hidden_states[0, 0:1, :])
             flag = False
-                
-        # 第二步：为每一行添加action_tokens
+
+        # Number of actually kept rows (your code sometimes "continues")
+        b2 = len(extracted_hidden_states)
+
+        # Build image queries (256) in reduced space, then lift to hidden_size space via inverse? (not needed)
+        # We'll append them AFTER projection, so we create them in reduced dim and append later.
+        image_queries = self.image_pos_queries.weight.unsqueeze(0).expand(b2, -1, -1)  # [B2, 256, reduced]
+
+        # Combine (context + action_tokens) first in hidden_size space (like you do)
         combined_states_list = []
         combined_attention_masks = []
         max_length = 0
-        
-        for i in range(len(extracted_hidden_states)):
-            # 将当前样本的hidden states与action tokens拼接
+
+        for i in range(b2):
             combined_hidden = torch.cat([extracted_hidden_states[i], action_tokens[i]], dim=0)
-            # print(f"Batch {i}: combined_hidden has NaN: {torch.isnan(combined_hidden).any()}")
             combined_states_list.append(combined_hidden)
-            
-            # 处理attention mask
+
             if attention_mask is not None:
-                # 为action tokens创建mask (全为1)
-                action_tokens_mask = torch.ones(self.time_horizon * self.action_dim, 
-                                            device=attention_mask.device, dtype=attention_mask.dtype)
+                action_tokens_mask = torch.ones(
+                    self.time_horizon * self.action_dim,
+                    device=attention_mask.device,
+                    dtype=attention_mask.dtype,
+                )
                 combined_mask = torch.cat([extracted_attention_masks[i], action_tokens_mask], dim=0)
                 combined_attention_masks.append(combined_mask)
-            
-            # 记录最大长度
+
             max_length = max(max_length, combined_hidden.shape[0])
-                
-        # 第三步：补全所有序列到相同长度
+
+        # Pad to same length
         padded_hidden_states = []
         padded_attention_masks = []
-        
-        for i in range(len(extracted_hidden_states)):
-            current_length = combined_states_list[i].shape[0]
-            if current_length < max_length:
-                # 用零向量补全hidden states
-                padding = torch.zeros(max_length - current_length, self.hidden_size, 
-                                    device=hidden_states.device, dtype=hidden_states.dtype)
+
+        for i in range(b2):
+            cur_len = combined_states_list[i].shape[0]
+            if cur_len < max_length:
+                padding = torch.zeros(
+                    max_length - cur_len,
+                    self.hidden_size,
+                    device=hidden_states.device,
+                    dtype=hidden_states.dtype,
+                )
                 padded_hidden = torch.cat([combined_states_list[i], padding], dim=0)
             else:
                 padded_hidden = combined_states_list[i]
-            
-            # print(f"Batch {i}: padded_hidden has NaN: {torch.isnan(padded_hidden).any()}")
+
             padded_hidden_states.append(padded_hidden)
-            
-            # 补全attention mask
+
             if attention_mask is not None:
-                current_mask_length = combined_attention_masks[i].shape[0]
-                if current_mask_length < max_length:
-                    mask_padding = torch.zeros(max_length - current_mask_length, 
-                                            device=attention_mask.device, dtype=attention_mask.dtype)
+                cur_mlen = combined_attention_masks[i].shape[0]
+                if cur_mlen < max_length:
+                    mask_padding = torch.zeros(
+                        max_length - cur_mlen,
+                        device=attention_mask.device,
+                        dtype=attention_mask.dtype,
+                    )
                     padded_mask = torch.cat([combined_attention_masks[i], mask_padding], dim=0)
                 else:
                     padded_mask = combined_attention_masks[i]
                 padded_attention_masks.append(padded_mask)
-        
-        # 堆叠成batch
-        processed_hidden_states = torch.stack(padded_hidden_states, dim=0)  # [batch_size, max_length, hidden_size]
-        # print(f"Processed hidden_states has NaN: {torch.isnan(processed_hidden_states).any()}")
-        
+
+        processed_hidden_states = torch.stack(padded_hidden_states, dim=0)  # [B2, max_length, hidden]
         if attention_mask is not None:
-            processed_attention_mask = torch.stack(padded_attention_masks, dim=0)  # [batch_size, max_length]
+            processed_attention_mask = torch.stack(padded_attention_masks, dim=0)     # [B2, max_length]
         else:
-            processed_attention_mask = torch.ones(len(extracted_hidden_states), processed_hidden_states.shape[1], 
-                                                device=processed_hidden_states.device)
-        
-        # print(f"Processed attention_mask has NaN: {torch.isnan(processed_attention_mask).any()}")
-        
-        # 投影到较小的维度
-        projected_states = self.hidden_projection(processed_hidden_states)
-        # print(f"Projected states has NaN: {torch.isnan(projected_states).any()}")
-        
-        # 检查hidden_projection层的权重
-        # if hasattr(self.hidden_projection, 'weight'):
-        #     print(f"Hidden projection weight has NaN: {torch.isnan(self.hidden_projection.weight).any()}")
-        #     if hasattr(self.hidden_projection, 'bias') and self.hidden_projection.bias is not None:
-        #         print(f"Hidden projection bias has NaN: {torch.isnan(self.hidden_projection.bias).any()}")
-        
-        # 通过transformer encoder
-        transformer_output = self.transformer_encoder(
-            projected_states,
-            src_key_padding_mask=(1 - processed_attention_mask).bool()
+            processed_attention_mask = torch.ones(
+                b2, processed_hidden_states.shape[1], device=processed_hidden_states.device
+            )
+
+        # Project context+action part to reduced dim
+        projected_states = self.hidden_projection(processed_hidden_states)  # [B2, max_length, reduced]
+
+        # Append the 256 image queries (already reduced dim)
+        # Build attention mask for image queries (all ones)
+        image_query_mask = torch.ones(
+            b2, self.num_image_tokens, device=processed_attention_mask.device, dtype=processed_attention_mask.dtype
         )
-        # print(f"Transformer output has NaN: {torch.isnan(transformer_output).any()}")
-        
-        # 检查transformer encoder的参数
-        # for name, param in self.transformer_encoder.named_parameters():
-        #     if torch.isnan(param).any():
-        #         print(f"Transformer encoder parameter {name} has NaN")
-        
-        # 第四步：提取action tokens对应的输出
+
+        projected_with_image = torch.cat([projected_states, image_queries], dim=1)          # [B2, max+256, reduced]
+        attention_with_image = torch.cat([processed_attention_mask, image_query_mask], dim=1)  # [B2, max+256]
+
+        transformer_output = self.transformer_encoder(
+            projected_with_image,
+            src_key_padding_mask=(1 - attention_with_image).bool(),
+        )  # [B2, max+256, reduced]
+
+        # ---- ACTIONS (same as before, but sequence is longer now; indices for action tokens unchanged) ----
         action_outputs = []
-        for i in range(len(extracted_hidden_states)):
-            # 计算当前样本原始序列长度
+        for i in range(b2):
             original_length = extracted_hidden_states[i].shape[0]
-            # action tokens在transformer输出中的位置
             action_start = original_length
             action_end = action_start + self.time_horizon * self.action_dim
-            
-            # 边界检查
-            if action_end > transformer_output.shape[1]:
-                print(f"Warning: action_end ({action_end}) > sequence length ({transformer_output.shape[1]}) for batch {i}")
-                action_end = transformer_output.shape[1]
-            
-            # 提取action tokens对应的输出
-            action_output_i = transformer_output[i, action_start:action_end, :]  # [time_horizon * action_dim, reduced_hidden_size]
-            # print(f"Batch {i}: action_output has NaN: {torch.isnan(action_output_i).any()}")
+            action_output_i = transformer_output[i, action_start:action_end, :]  # [TH*AD, reduced]
             action_outputs.append(action_output_i)
-                
-        # 将所有action outputs堆叠
-        action_outputs_tensor = torch.stack(action_outputs, dim=0)  # [batch_size, time_horizon * action_dim, reduced_hidden_size]
-        # print(f"Action outputs tensor has NaN: {torch.isnan(action_outputs_tensor).any()}")
-        
-        # 生成最终的动作预测
-        actions = self.output_projection(action_outputs_tensor)
-        actions = actions.reshape(-1, self.action_dim)
-        # print(f"Final actions has NaN: {torch.isnan(actions).any()}")
-        
-        # 检查output_projection层的权重
-        # if hasattr(self.output_projection, 'weight'):
-        #     print(f"Output projection weight has NaN: {torch.isnan(self.output_projection.weight).any()}")
-        #     if hasattr(self.output_projection, 'bias') and self.output_projection.bias is not None:
-        #         print(f"Output projection bias has NaN: {torch.isnan(self.output_projection.bias).any()}")
-        
-        # print("=== End NaN Debug Info ===")
-        
+
+        action_outputs_tensor = torch.stack(action_outputs, dim=0)  # [B2, TH*AD, reduced]
+        actions = self.output_projection(action_outputs_tensor).reshape(-1, self.action_dim)
+
+        # ---- IMAGE TOKENS (take last 256 positions, which are our appended queries) ----
+        image_outputs = transformer_output[:, -self.num_image_tokens:, :]  # [B2, 256, reduced]
+        image_logits = self.image_head(image_outputs)  
+                        # [B2, 256, 8192]
+        if return_image_logits:
+            if target_image_tokens is not None and flag:
+                aligned_targets = target_image_tokens[kept_row_indices].to(
+                    device=image_logits.device, dtype=torch.long
+                )
+                awm_logits = image_logits.permute(0, 2, 1).contiguous()  # [B2, 8192, 256]
+                loss_awm = torch.nn.functional.cross_entropy(awm_logits, aligned_targets)
+            else:
+                loss_awm = image_logits.mean() * 0
+            return actions, flag, image_logits, loss_awm
         return actions, flag
+
 
 
 
@@ -313,7 +333,7 @@ class ChameleonXLLMXForConditionalGeneration_ck_action_head(ChameleonForConditio
         self.post_init()
         
 
-    def forward(self, input_ids=None, labels=None, training=False, att_mask=True, **kwargs):
+    def forward(self, input_ids=None, labels=None, training=False, att_mask=True, get_future_state=False, target_image_tokens=None, **kwargs):
 
         if not training:
             # import pdb; pdb.set_trace()
@@ -379,15 +399,26 @@ class ChameleonXLLMXForConditionalGeneration_ck_action_head(ChameleonForConditio
             hidden_states = result[2][-1]  # [batch_size, seq_len, hidden_dim]
             
             # 调用ActionHead来预测动作
-            predicted_actions, actions_flag = self.action_head(
-                hidden_states=hidden_states,
-                input_ids=input_ids,
-                attention_mask=None,
-                target_token_id=10004
-            )
+            if get_future_state:
+                predicted_actions, actions_flag, image_logits, loss_awm = self.action_head(
+                    hidden_states=hidden_states,
+                    input_ids=input_ids,
+                    attention_mask=None,
+                    target_token_id=10004,
+                    return_image_logits=get_future_state,
+                    target_image_tokens=target_image_tokens
+                )
+            else:
+                predicted_actions, actions_flag = self.action_head(
+                    hidden_states=hidden_states,
+                    input_ids=input_ids,
+                    attention_mask=None,
+                    target_token_id=10004,
+                    return_image_logits=get_future_state,
+                )
 
             if actions_flag == False:
-                return c_loss, additional_loss_dict, result[1], hidden_states, labels, predicted_actions, predicted_actions.mean()*0
+                return c_loss, additional_loss_dict, result[1], hidden_states, labels, predicted_actions, predicted_actions.mean()*0, image_logits, 0
             
             # print(f"Predicted actions shape: {predicted_actions.shape}")
             # print(f"Predicted actions: {predicted_actions}")
@@ -396,6 +427,9 @@ class ChameleonXLLMXForConditionalGeneration_ck_action_head(ChameleonForConditio
             labels_action_ct = self.decode_token_ids_to_actions(labels_action_dis)
 
             loss_ct = torch.nn.functional.l1_loss(predicted_actions, labels_action_ct)
+
+            if get_future_state:
+                return c_loss, additional_loss_dict, result[1], hidden_states, labels, predicted_actions, loss_ct, image_logits, loss_awm
 
             # print(f"Predicted actions shape: {predicted_actions.shape}", f"GT actions shape: {labels_action_ct.shape}")
 

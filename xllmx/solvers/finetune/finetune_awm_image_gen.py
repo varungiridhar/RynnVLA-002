@@ -323,7 +323,8 @@ class FinetuneSolverBase_ContinuousHead_Image_Gen(ABC):
         if hasattr(unwrapped_model, "get_trainable_params"):
             trainable_params = dict(unwrapped_model.get_trainable_params())
             for key, param in unwrapped_model.named_parameters():
-                if key in trainable_params or 'lora' in key:
+                # only training action head for this particular type of finetuning
+                if (key in trainable_params or 'lora' in key) and "action_head" in key:
                     param.requires_grad = True
                     promote_param_to_fp32(param)
                 else:
@@ -340,7 +341,7 @@ class FinetuneSolverBase_ContinuousHead_Image_Gen(ABC):
                 f"set all params to trainable"
             )
             for key, param in unwrapped_model.named_parameters():
-                if "lora_" in key.lower() or not use_peft:
+                if ("lora_" in key.lower() or not use_peft) and "action_head" in key:
                     param.requires_grad = True
                 param.data = param.data.to(torch.bfloat16)
         self.logger.info("Finish instantiating unwrapped model.")
@@ -413,7 +414,7 @@ class FinetuneSolverBase_ContinuousHead_Image_Gen(ABC):
         self.logger.info(f"Wrapped model: \n{str(model)}")
 
         # Setup optimizer
-        opt = torch.optim.AdamW(model.parameters(), lr=self.args.lr, weight_decay=self.args.wd, betas=(0.9, 0.95))
+        opt = torch.optim.AdamW(filter(lambda param: param.requires_grad, model.parameters()), lr=self.args.lr, weight_decay=self.args.wd, betas=(0.9, 0.95))
 
         return model, tokenizer, opt
 
@@ -896,7 +897,7 @@ class FinetuneSolverBase_ContinuousHead_Image_Gen(ABC):
                         tokens, labels_ = self.item_processor_ar.process_item(conversation, training_mode=True)
                         examples.append(tokens)
                         labels.append(labels_)
-                        future_images.append(self.item_processor_ar.process_image(future_img, raw_toks=True))
+                        future_images.append(self.item_processor_ar.image_to_raw_tokens(future_img))
                 else:
                     for conv, img, act, sta, future_img in zip(conversations, images, actions, states, future_imgs):
                         conversation = {
@@ -908,7 +909,7 @@ class FinetuneSolverBase_ContinuousHead_Image_Gen(ABC):
                         tokens, labels_ = self.item_processor_ar.process_item(conversation, training_mode=True)
                         examples.append(tokens)
                         labels.append(labels_)
-                        future_images.append(self.item_processor_ar.process_image(future_img, raw_toks=True))
+                        future_images.append(self.item_processor_ar.image_to_raw_tokens(future_img))
 
             if is_gradient_accumulation_boundary or data_iter_step == start_iter:
                 lr_sched.adjust_learning_rate_epoch(
@@ -1061,7 +1062,7 @@ class FinetuneSolverBase_ContinuousHead_Image_Gen(ABC):
                         tokens, labels_ = self.item_processor_ar.process_item(conversation, training_mode=True)
                         examples.append(tokens)
                         labels.append(labels_)
-                        future_images.append(self.item_processor_ar.process_image(future_img, raw_toks=True))
+                        future_images.append(self.item_processor_ar.image_to_raw_tokens(future_img))
                 else:
                     for conv, img, act, sta, future_img in zip(conversations, images, actions, states, future_imgs):
                         conversation = {
@@ -1073,7 +1074,7 @@ class FinetuneSolverBase_ContinuousHead_Image_Gen(ABC):
                         tokens, labels_ = self.item_processor_ar.process_item(conversation, training_mode=True)
                         examples.append(tokens)
                         labels.append(labels_)
-                        future_images.append(self.item_processor_ar.process_image(future_img, raw_toks=True))
+                        future_images.append(self.item_processor_ar.image_to_raw_tokens(future_img))
             future_images = torch.stack(future_images, dim=0)
             if is_gradient_accumulation_boundary or data_iter_step == start_iter:
                 lr_sched.adjust_learning_rate_epoch(
@@ -1111,7 +1112,7 @@ class FinetuneSolverBase_ContinuousHead_Image_Gen(ABC):
             for i in range(len(accuracies_action)):
                 metric_logger.update(**{f"acc_action_{i}": accuracies_action[i]})
                 metric_logger.update(**{f"l1_loss_action_{i}": l1_loss[i]})
-            
+            metric_logger.update(**{f"loss_awm": loss_awm})
             for i in range(len(accuracies_image)):
                 metric_logger.update(**{f"acc_image_{i}": accuracies_image[i]})
 

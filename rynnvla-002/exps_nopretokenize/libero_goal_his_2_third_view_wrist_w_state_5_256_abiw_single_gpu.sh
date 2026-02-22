@@ -49,7 +49,7 @@ torchrun --master_addr=$MASTER_ADDR --master_port=$MASTER_PORT --nproc_per_node=
 --with_world_model \
 --resolution 256 \
 --no_auto_resume \
---init_from ../ckpts/starting_point \
+--init_from /home/guest2/.cache/huggingface/hub/models--Alibaba-DAMO-Academy--RynnVLA-002/snapshots/be44787bfdf010799129dbd3752637f5c52ca957/VLA_model_256/libero_goal/ \
 --tokenizer_path /home/guest2/RynnVLA-002/ckpts/models--Alpha-VLLM--Lumina-mGPT-7B-768/snapshots/9624463a82ea5ce814af9b561dcd08a31082c3af \
 --ablation 0 \
 --model_size 7B \

@@ -117,7 +117,7 @@ class LiberoFinetuneConversation(Dataset):
     def get_world_model_data(self, action_idx, action_sum, orig_actions, trj, task_name, task_id):
         his = self.config["world_model"]["his"]
         len_action = self.config["action_model"]["len_action"]
-        if action_idx>action_sum-his-1:
+        if action_idx>action_sum-len_action-1:
             return None
         data = {}
 

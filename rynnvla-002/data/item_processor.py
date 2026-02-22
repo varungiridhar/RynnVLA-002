@@ -306,6 +306,36 @@ class FlexARItemProcessor_Action(MMConvItemProcessor):
         return {"input_ids": result_toks, "labels": result_toks}
     
     @torch.no_grad()
+    def image_to_raw_tokens(self, image) -> Dict:
+        if isinstance(image, Image.Image):
+            pass
+        elif isinstance(image, list):
+            image = Image.fromarray(np.array(image).astype(np.uint8))
+        else:
+            image = Image.open(read_general(image))
+            # new_size = (320, 224)
+            # image = image.resize(new_size)
+        
+        # import pdb; pdb.set_trace()
+
+        image = var_center_crop(image, crop_size_list=self.crop_size_list)
+
+        image_toks = self.chameleon_ori_image_tokenizer.img_tokens_from_pil(image).view(-1)
+
+        
+        return image_toks
+
+    def raw_tokens_to_image(self, tokens: List[int], h_latent_dim, w_latent_dim) -> Image.Image:
+        assert len(tokens) == h_latent_dim * (w_latent_dim + 1)
+        tokens = torch.tensor(tokens, dtype=torch.int64).cuda()
+
+        tokens = tokens.view(h_latent_dim, w_latent_dim + 1)[:, :-1].flatten()
+
+        return self.chameleon_ori_image_tokenizer.pil_from_img_toks(tokens, h_latent_dim, w_latent_dim)
+
+        
+    
+    @torch.no_grad()
     def process_action(self, action) -> Dict:
         if isinstance(action, str):
             action = np.load(action)

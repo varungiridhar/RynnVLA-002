@@ -14,8 +14,6 @@ from xllmx.data.item_processor import MMConvItemProcessor
 
 from transformers import AutoProcessor
 
-import traceback
-
 logger = logging.getLogger(__name__)
 
 
@@ -328,8 +326,6 @@ class FlexARItemProcessor_Action(MMConvItemProcessor):
     def raw_tokens_to_image(self, tokens: List[int], h_latent_dim, w_latent_dim) -> Image.Image:
         assert len(tokens) == h_latent_dim * (w_latent_dim + 1)
         tokens = torch.tensor(tokens, dtype=torch.int64).cuda()
-
-        tokens = tokens.view(h_latent_dim, w_latent_dim + 1)[:, :-1].flatten()
 
         return self.chameleon_ori_image_tokenizer.pil_from_img_toks(tokens, h_latent_dim, w_latent_dim)
 

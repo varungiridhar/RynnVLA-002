@@ -242,6 +242,17 @@ cd rynnvla-002/exps_nopretokenize
 bash libero_goal_his_2_third_view_wrist_w_state_5_256_abiw.sh
 ```
 
+#### Finetuning Action Head with Future State Prediction
+For finetuning the action head with future state prediction, run:
+```bash
+bash /home/guest2/RynnVLA-002/rynnvla-002/exps_nopretokenize/libero_goal_his_2_third_view_wrist_w_state_5_256_abiw_single_gpu.sh
+```
+
+Current setting notes:
+- The base model is frozen during this finetuning stage.
+- LoRA on the action head is configurable (for example via `--peft.method_type`, `--peft.r`, and related PEFT args).
+- The AWM loss weight is controlled by `loss_awm_weight`.
+
 ## 🔧 PEFT Training Script (Before Evaluation)
 Use the single-GPU training script:
 ```bash
